@@ -1,0 +1,275 @@
+// Include the IRremote library for infrared communication
+#include <IRremote.h>
+#define DECODE_NEC
+#define IR_RECEIVE_PIN 9  // Define the pin for IR receiver
+
+// Define IR remote button codes
+#define Forward 70
+#define Right 67
+#define Left 68
+#define Back 21
+#define Scan 24
+#define Scan2 22
+
+// Define IR remote command values
+#define For 0xB946FF00
+#define Rig 0xBC43FF00
+#define Lef 0xBB44FF00
+#define Bac 0xEA15FF00
+#define Sca 0xE619FF00
+#define Hol 0x0
+
+decode_results results;  // Variable to store decoded IR results
+int STB = 3;  // Define a control pin
+unsigned long preMillis;  // Variable to store previous millis for timing
+
+// Define states for robot movement
+enum Follow {
+  FORWARD,
+  STOP,
+  LOOK_RIGHT,
+  TURN_RIGHT,
+  LOOK_MIDDLE,
+  TURN_LEFT,
+  LOOK_LEFT,
+  BACKWARD
+};
+enum Follow2 { FOLLOW, UNFOLLOW };
+enum State { REMOTE };
+
+State myState = REMOTE;  // Initial state
+Follow myState2 = FORWARD;  // Initial movement state
+Follow2 myState3 = UNFOLLOW;  // Initial follow state
+
+// Define pins for ultrasonic sensor
+#define trigPin 13
+#define echoPin 12
+float duration, distance;  // Variables for ultrasonic sensor measurement
+
+// Define I2C address for slave Arduino
+#define SLAVE_ADDR 9
+#include <Wire.h>
+int rd;  // Variable to store data received from I2C
+
+// Include the Servo library
+#include <Servo.h>
+Servo myservo;  // Create a servo object
+
+// Define motor control pins
+int PMWA = 5;
+int AIN1 = 7;
+int PMWB = 6;
+int BIN1 = 8;
+
+// Function to control the robot's movement based on the distance to an object
+void follow() {
+  switch (myState2) {
+    case FORWARD:
+      myservo.write(90);  // Set servo to middle position
+      if (distance < 20) {
+        myState2 = STOP;
+      } else if (distance > 20 && distance < 40) {
+        forward();
+      } else if (distance > 40) {
+        myState2 = LOOK_RIGHT;
+      }
+      break;
+
+    case STOP:
+      Stop();
+      if (distance < 20 && distance > 15) {
+        Stop();
+      } else {
+        myState2 = BACKWARD;
+      }
+      break;
+
+    case LOOK_RIGHT:
+      Stop();
+      myservo.write(20);  // Turn servo to the right
+      delay(300);
+      Ultrasonic();  // Measure distance
+      if (distance < 40) {
+        myState2 = TURN_RIGHT;
+      } else {
+        myState2 = LOOK_MIDDLE;
+      }
+      break;
+
+    case TURN_RIGHT:
+      right();
+      delay(500);
+      myState2 = FORWARD;
+      break;
+
+    case LOOK_MIDDLE:
+      Stop();
+      IrReceiver.resume();
+      myservo.write(90);  // Set servo to middle position
+      delay(300);
+      Ultrasonic();
+      if (distance < 40) {
+        myState2 = FORWARD;
+      } else {
+        myState2 = LOOK_LEFT;
+      }
+      break;
+
+    case LOOK_LEFT:
+      Stop();
+      myservo.write(160);  // Turn servo to the left
+      delay(300);
+      Ultrasonic();
+      if (distance < 40) {
+        myState2 = TURN_LEFT;
+      } else {
+        myState2 = LOOK_RIGHT;  // Continue scanning
+      }
+      break;
+
+    case TURN_LEFT:
+      left();
+      delay(300);
+      myState2 = FORWARD;
+      break;
+
+    case BACKWARD:
+      if (distance < 15) {
+        backward();
+      } else {
+        myState2 = FORWARD;
+      }
+      break;
+  }
+}
+
+// Setup function to initialize the robot
+void setup() {
+  Serial.begin(9600);  // Initialize serial communication
+  myservo.attach(10);  // Attach the servo to pin 10
+  digitalWrite(STB, HIGH);  // Set the control pin high
+  pinMode(trigPin, OUTPUT);  // Set trig pin as output
+  pinMode(echoPin, INPUT);  // Set echo pin as input
+  pinMode(PMWA, OUTPUT);  // Set motor control pins as output
+  pinMode(AIN1, OUTPUT);
+  pinMode(PMWB, OUTPUT);
+  pinMode(BIN1, OUTPUT);
+  Wire.begin(SLAVE_ADDR);  // Initialize I2C communication
+  Wire.onReceive(receiveEvent);  // Register receive event
+  pinMode(13, OUTPUT);  // Set pin 13 as output
+  IrReceiver.begin(IR_RECEIVE_PIN);  // Initialize IR receiver
+}
+
+// Function to handle received I2C data
+void receiveEvent() {
+  rd = Wire.read();  // Read one character from I2C
+  Serial.println(rd);  // Print the received data
+}
+
+// Function to measure distance using ultrasonic sensor
+void Ultrasonic() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  duration = pulseIn(echoPin, HIGH);
+  distance = (duration / 2) * 0.0343;
+}
+
+// Function to move the robot forward
+void forward() {
+  digitalWrite(BIN1, HIGH);
+  analogWrite(PMWB, 150);
+  digitalWrite(AIN1, HIGH);
+  analogWrite(PMWA, 150);
+}
+
+// Function to stop the robot
+void Stop() {
+  digitalWrite(BIN1, LOW);
+  analogWrite(PMWB, 0);
+  digitalWrite(AIN1, LOW);
+  analogWrite(PMWA, 0);
+}
+
+// Function to turn the robot right
+void right() {
+  digitalWrite(BIN1, HIGH);
+  analogWrite(PMWB, 75);
+  digitalWrite(AIN1, LOW);
+  analogWrite(PMWA, 75);
+}
+
+// Function to turn the robot left
+void left() {
+  digitalWrite(BIN1, LOW);
+  analogWrite(PMWB, 75);
+  digitalWrite(AIN1, HIGH);
+  analogWrite(PMWA, 75);
+}
+
+// Function to move the robot backward
+void backward() {
+  digitalWrite(BIN1, LOW);
+  analogWrite(PMWB, 150);
+  digitalWrite(AIN1, LOW);
+  analogWrite(PMWA, 150);
+}
+
+// Main loop function
+void loop() {
+  Serial.println(myState);  // Print current state
+  Ultrasonic();  // Measure distance
+  Serial.println(IrReceiver.decodedIRData.command);  // Print IR command
+  switch (myState3) {
+    case FOLLOW:
+      follow();  // Call follow function
+      break;
+
+    case UNFOLLOW:
+      if (rd == 1) {
+        myState3 = FOLLOW;
+      }
+      myservo.write(90);  // Set servo to middle position
+      Serial.println("h");
+      break;
+  }
+
+  switch (myState) {
+    case REMOTE:
+      if (IrReceiver.decode()) {
+        preMillis = millis();
+        IrReceiver.resume();
+        int command = IrReceiver.decodedIRData.command;
+        switch (command) {
+          case Forward:
+            forward();
+            break;
+          case Right:
+            right();
+            break;
+          case Left:
+            left();
+            break;
+          case Back:
+            backward();
+            break;
+          case Scan:
+            myState3 = FOLLOW;
+            break;
+          case Scan2:
+            myState3 = UNFOLLOW;
+            break;
+          default:
+            Serial.println("Button not recognized");
+        }
+      } else {
+        if (millis() - preMillis > 100) {
+          Stop();
+          preMillis = millis();
+        }
+        break;
+      }
+  }
+}
